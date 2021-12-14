@@ -22,6 +22,12 @@ public class KeyPair<TKey> {
 		if (key == null) throw new ArgumentNullException(nameof(key));
 		return key.Equals(Item1) ? Item2 : key.Equals(Item2) ? Item1 : throw new ArgumentException("Invalid key.");
 	}
+	public KeyPair<TKey> Transpose => new KeyPair<TKey>(Item2, Item1);
+
+	public void Deconstruct ([NotNull] out TKey item1, [NotNull] out TKey item2) {
+		item1 = Item1;
+		item2 = Item2;
+	}
 
 	public override string ToString () => "( " + Item1 + ", " + Item2 + ")";
 

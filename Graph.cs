@@ -13,14 +13,41 @@ namespace Utils.ProcGenUtils.GraphModel {
 /// <typeparam name="TValue">Type that vertices will hold as value</typeparam>
 public class Graph<TKey, TValue> {
     private Dictionary<TKey, TValue> _vertices;
-    private Dictionary<TKey, List<Edge<TKey>>> _adjacency;
+    private Dictionary<TKey, List<TKey>> _adjacency;
+    private Dictionary<TKey, List<TKey>> _transpose;
     private Dictionary<KeyPair<TKey>, Edge<TKey>>_edges;
-    
+
+    #region Public Properties
+
+    /// <summary>
+    /// Returns o list of all pairs of keys that define an edge in the graph.
+    /// </summary>
     public List<KeyPair<TKey>> Edges => _edges.Select(pair => pair.Key).ToList();
+    /// <summary>
+    /// Returns o list of all pairs of keys that its transpose define an edge in the directed graph.
+    /// </summary>
+    /// <exception cref="InvalidOperationException">Undirected graph does not have a transpose.</exception>
+    public List<KeyPair<TKey>> TransposedEdges => IsDirected
+        ? _edges.Select(pair => pair.Key.Transpose).ToList()
+        : throw new InvalidOperationException("Undirected graph does not have a transpose.");
+    /// <summary>
+    /// Returns a list of all vertex keys in the graph.
+    /// </summary>
     public List<TKey> Vertices => _vertices.Select(pair => pair.Key).ToList();
     public readonly bool IsDirected;
     public readonly float DefaultWeight;
 
+    /// <summary>
+    /// Returns a graph object that is the transpose of this one.
+    /// </summary>
+    /// <exception cref="InvalidOperationException">Undirected graph does not have a transpose.</exception>
+    public Graph<TKey, TValue> Transpose => IsDirected
+        ? new Graph<TKey, TValue>(this, true)
+        : throw new InvalidOperationException("Undirected graph does not have a transpose.");
+    
+
+    #endregion
+    
     #region Indexers
 
     /// <summary>
@@ -81,7 +108,8 @@ public class Graph<TKey, TValue> {
         IsDirected = isDirected;
         
         _vertices = new Dictionary<TKey, TValue>();
-        _adjacency = new Dictionary<TKey, List<Edge<TKey>>>();
+        _adjacency = new Dictionary<TKey, List<TKey>>();
+        _transpose = new Dictionary<TKey, List<TKey>>();
         _edges = isDirected ? 
             new Dictionary<KeyPair<TKey>, Edge<TKey>>(KeyPair<TKey>.DirectedComparer) : 
             new Dictionary<KeyPair<TKey>, Edge<TKey>>(KeyPair<TKey>.UndirectedComparer);
@@ -95,6 +123,19 @@ public class Graph<TKey, TValue> {
     /// Initializes a new instance of the <see cref="Graph{TKey,TValue}"/> class.
     /// </summary>
     public Graph() : this(Mathf.Infinity, false) { }
+    private Graph([NotNull] Graph<TKey, TValue> other, bool transpose) : 
+        this(other.DefaultWeight, other.IsDirected) {
+        if (other == null) throw new ArgumentNullException(nameof(other));
+        other.Vertices.ForEach(key => this[key] = other[key]);
+        if(transpose) other.Edges.ForEach(pair => this[pair[1], pair[0]] = other[pair].Weight);
+        else other.Edges.ForEach(pair => this[pair[0], pair[1]] = other[pair].Weight);
+    }
+    /// <summary>
+    /// Initializes a new instance of the <see cref="Graph{TKey,TValue}"/> class.
+    /// </summary>
+    /// <param name="other">The other graph object that will be copied from</param>
+    public Graph([NotNull] Graph<TKey, TValue> other) : this(other, false) { }
+
 
     #endregion
 
@@ -148,8 +189,21 @@ public class Graph<TKey, TValue> {
     /// that has an edge with the required vertex.</returns>
     /// <exception cref="ArgumentException">Vertex with given key was not found</exception>
     public IEnumerable<TKey> GetAdjacency([NotNull] TKey key) => ContainsVertex(key)
-        ? _adjacency[key].Select(e => e.Other(key))
+        ? new List<TKey>(_adjacency[key])
         : throw new ArgumentException("Vertex with given key was not found");
+    
+    /// <summary>
+    /// Retrieves a copy of the adjacency list of a given vertex.
+    /// </summary>
+    /// <param name="key">Key of the desired adjacency list's vertex</param>
+    /// <returns>A list containing the keys of all vertices in this graph
+    /// that has an edge with the required vertex.</returns>
+    /// <exception cref="ArgumentException">Vertex with given key was not found.</exception>
+    /// <exception cref="InvalidOperationException">Undirected graph does not have a transpose.</exception>
+    public IEnumerable<TKey> GetTranspose([NotNull] TKey key) => ContainsVertex(key)
+        ? IsDirected ? new List<TKey>(_transpose[key])
+            : throw new InvalidOperationException("Undirected graph does not have a transpose.")
+        : throw new ArgumentException("Vertex with given key was not found.");
 
     #endregion
     
@@ -158,7 +212,8 @@ public class Graph<TKey, TValue> {
         if (ContainsVertex(vertKey)) return false;
         
         _vertices.Add(vertKey, vertValue);
-        _adjacency.Add(vertKey, new List<Edge<TKey>>());
+        _adjacency.Add(vertKey, new List<TKey>());
+        if(IsDirected) _transpose.Add(vertKey, new List<TKey>());
         return true;
     }
     private Edge<TKey> AddEdge ([NotNull] KeyPair<TKey> pair) {
@@ -169,13 +224,14 @@ public class Graph<TKey, TValue> {
             throw new ArgumentException("Undirected graph cannot have self loops");
         
         //Check if the vertices really exist in the graph
-        if (!ContainsVertex(@from, to))
+        if (!ContainsVertex(from, to))
             throw new ArgumentException("Cannot create an edge with vertices not in the graph.");
 
         //Create the edge
         var edge = new Edge<TKey>(from, to, DefaultWeight);
-        _adjacency[from].Add(edge);
-        if( !IsDirected ) _adjacency[to].Add(edge);
+        _adjacency[from].Add(to);
+        if( !IsDirected ) _adjacency[to].Add(from);
+        else _transpose[to].Add(from);
         
         _edges.Add(edge.Vertices, edge);
         
@@ -184,6 +240,37 @@ public class Graph<TKey, TValue> {
 
     #endregion
 
+    #region Removers
+
+    public bool RemoveVertex ([NotNull] TKey vert) {
+        if (!ContainsVertex(vert)) return false;
+
+        _vertices.Remove(vert);
+        new List<TKey>(_adjacency[vert]).ForEach(adj => RemoveEdge(new KeyPair<TKey>(vert, adj)));
+        _adjacency.Remove(vert);
+
+        if (!IsDirected) return true;
+        
+        new List<TKey>(_transpose[vert]).ForEach(adj => RemoveEdge(new KeyPair<TKey>(adj, vert)));
+        _transpose.Remove(vert);
+        
+        return true;
+    }
+
+    public bool RemoveEdge([NotNull] KeyPair<TKey> pair) {
+        if(!ContainsEdge(pair)) return false;
+
+        var (from, to) = pair;
+        _adjacency[from].Remove(to);
+        if (!IsDirected) _adjacency[to].Remove(from);
+
+        _edges.Remove(pair);
+        
+        return true;
+    }
+
+    #endregion
+    
     #region Print
 
     public override string ToString () => "Directed Graph: " + IsDirected + 
