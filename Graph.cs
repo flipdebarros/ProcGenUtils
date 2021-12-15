@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using JetBrains.Annotations;
+using Unity.VisualScripting;
 using UnityEngine;
 
 namespace Utils.ProcGenUtils.GraphModel {
@@ -166,7 +167,7 @@ public class Graph<TKey, TValue> {
     /// <summary>
     /// Checks if edge exists in graph.
     /// </summary>
-    /// <param name="pair">Key of the vertices in the edge, for a directed graph
+    /// <param name="pair">Pair of keys of the vertices that define the edge, for a directed graph
     /// the first is the source and the second the destination.</param>
     /// <returns>True if edge exists, false otherwise.</returns>
     /// <exception cref="ArgumentNullException"></exception>
@@ -179,7 +180,7 @@ public class Graph<TKey, TValue> {
 
     #endregion
 
-    #region Getters
+    #region Get
     
     /// <summary>
     /// Retrieves a copy of the adjacency list of a given vertex.
@@ -207,7 +208,7 @@ public class Graph<TKey, TValue> {
 
     #endregion
     
-    #region Adders
+    #region Add
     private bool AddVertex ([NotNull] TKey vertKey, [NotNull] TValue vertValue) {
         if (ContainsVertex(vertKey)) return false;
         
@@ -240,8 +241,13 @@ public class Graph<TKey, TValue> {
 
     #endregion
 
-    #region Removers
+    #region Remove
 
+    /// <summary>
+    /// Removes a vertex from the graph, and every edge containing it.
+    /// </summary>
+    /// <param name="vert">key of the vertex to be removed.</param>
+    /// <returns>True if the vertex was successfully removed, false otherwise</returns>
     public bool RemoveVertex ([NotNull] TKey vert) {
         if (!ContainsVertex(vert)) return false;
 
@@ -257,6 +263,12 @@ public class Graph<TKey, TValue> {
         return true;
     }
 
+    /// <summary>
+    /// Remove an edge from the graph
+    /// </summary>
+    /// <param name="pair">Pair of key that defines the edge, for a directed graph
+    /// the first is the source and the second the destination.</param>
+    /// <returns>True if the edge was successfully removed, false otherwise</returns>
     public bool RemoveEdge([NotNull] KeyPair<TKey> pair) {
         if(!ContainsEdge(pair)) return false;
 
@@ -267,6 +279,66 @@ public class Graph<TKey, TValue> {
         _edges.Remove(pair);
         
         return true;
+    }
+
+    #endregion
+
+    #region Search
+
+    private enum SearchColor {
+        White, Gray, Black
+    }
+    /// <summary>
+    /// Performs an breadth-first search in the graph.
+    /// </summary>
+    /// <param name="seed">Vertex which will be used to start the search</param>
+    /// <param name="transpose">Decides whether the edges of the bfs tree will point from parent to child (true)
+    /// or child to parent (false)</param>
+    /// <returns>A Breadth-First Tree generated in the search populated with every vertex reachable by the seed
+    /// containing its distance from the seed</returns>
+    public Graph<TKey, int> BreadthFirstSearch([NotNull] TKey seed,  bool transpose = true) => 
+        BreadthFirstSearch<int>(seed, 0, (du, v) => du+1, transpose);
+    /// <summary>
+    /// Performs an breadth-first search in the graph.
+    /// </summary>
+    /// <param name="seed">Vertex which will be used to start the search</param>
+    /// <param name="seedData">The data that will be contained in the root of bfs tree returned</param>
+    /// <param name="dataSelector">Function that will be used to calculate the data of every vertex in
+    /// the bfs tree given the data of its parent vertex and its key</param>
+    /// <param name="transpose">Decides whether the edges of the bfs tree will point from parent to child (true)
+    /// or child to parent (false)</param>
+    /// <typeparam name="TOut">Type of the data value that will be stored in the bfs tree's vertices</typeparam>
+    /// <returns>A Breadth-First Tree generated in the search populated with every vertex reachable by the seed
+    /// and containing the data calculated by the dataSelector function</returns>
+    /// <exception cref="ArgumentNullException"></exception>
+    public Graph<TKey, TOut> BreadthFirstSearch<TOut>([NotNull] TKey seed, [NotNull] TOut seedData, [NotNull] Func<TOut, TKey, TOut> dataSelector,  bool transpose = true) {
+        if (seedData == null) throw new ArgumentNullException(nameof(seedData));
+        if (dataSelector == null) throw new ArgumentNullException(nameof(dataSelector));
+        if (!ContainsVertex(seed)) return null;
+
+        var colors = _vertices.ToDictionary(pair => pair.Key, pair => SearchColor.White);
+        var parentTree = new Graph<TKey, TOut>(DefaultWeight, true);
+        
+        colors[seed] = SearchColor.Gray;
+        parentTree[seed] = seedData;
+
+        var queue = new Queue<TKey>(new []{seed});
+        while (queue.Count > 0) {
+            var u = queue.Dequeue();
+            _adjacency[u].ForEach(v => {
+                if (colors[v] != SearchColor.White) return;
+                colors[v] = SearchColor.Gray;
+
+                
+                parentTree[v] = dataSelector(parentTree[u], v);
+                if (transpose) parentTree[v, u] = this[u, v];
+                else parentTree[u, v] = this[u, v];
+                queue.Enqueue(v);
+            });
+            colors[u] = SearchColor.Black;
+        }
+
+        return parentTree;
     }
 
     #endregion
@@ -284,7 +356,9 @@ public class Graph<TKey, TValue> {
     private string PrintAdjacency () =>
         _vertices.Aggregate("", (str, pair) => str + "\t " + PrintEdges(pair.Key) + "\n");
     private string PrintEdges(TKey key) => GetAdjacency(key).Aggregate(key + " -> ",
-        (str, other) => str + " " + other + " [ " + this[key, other] + " ]");
+        (str, other) => str + " " + other + 
+                        (Mathf.Abs(this[key, other] - 1f) > Mathf.Epsilon ? 
+                            " [ " + this[key, other] + " ]" : ""));
 
     #endregion
 }
