@@ -23,13 +23,13 @@ public class Graph<TKey, TValue> {
     /// <summary>
     /// Returns o list of all pairs of keys that define an edge in the graph.
     /// </summary>
-    public List<KeyPair<TKey>> Edges => _edges.Select(pair => pair.Key).ToList();
+    public List<(TKey, TKey)> Edges => _edges.Select(pair => pair.Key.Tuple).ToList();
     /// <summary>
     /// Returns o list of all pairs of keys that its transpose define an edge in the directed graph.
     /// </summary>
     /// <exception cref="InvalidOperationException">Undirected graph does not have a transpose.</exception>
-    public List<KeyPair<TKey>> TransposedEdges => IsDirected
-        ? _edges.Select(pair => pair.Key.Transpose).ToList()
+    public List<(TKey, TKey)> TransposedEdges => IsDirected
+        ? _edges.Select(pair => pair.Key.TransposedTuple).ToList()
         : throw new InvalidOperationException("Undirected graph does not have a transpose.");
     /// <summary>
     /// Returns a list of all vertex keys in the graph.
@@ -73,8 +73,8 @@ public class Graph<TKey, TValue> {
     /// <param name="pair">Pair of keys of desired edge vertices.</param>
     /// <exception cref="ArgumentNullException"></exception>
     /// <exception cref="ArgumentException">Edge was not found.</exception>
-    public Edge<TKey> this[[NotNull] KeyPair<TKey> pair] => ContainsEdge(pair)
-        ? new Edge<TKey>(_edges[pair])
+    public Edge<TKey> this[(TKey, TKey) pair] => ContainsEdge(pair)
+        ? new Edge<TKey>(_edges[new KeyPair<TKey>(pair)])
         : throw new ArgumentException("Edge was not found.");
     /// <summary>
     /// Access and updates the weight of a given edge,
@@ -128,8 +128,8 @@ public class Graph<TKey, TValue> {
         this(other.DefaultWeight, other.IsDirected) {
         if (other == null) throw new ArgumentNullException(nameof(other));
         other.Vertices.ForEach(key => this[key] = other[key]);
-        if(transpose) other.Edges.ForEach(pair => this[pair[1], pair[0]] = other[pair].Weight);
-        else other.Edges.ForEach(pair => this[pair[0], pair[1]] = other[pair].Weight);
+        if(transpose) other.Edges.ForEach(pair => this[pair.Item1, pair.Item2] = other[pair].Weight);
+        else other.Edges.ForEach(pair => this[pair.Item2, pair.Item1] = other[pair].Weight);
     }
     /// <summary>
     /// Initializes a new instance of the <see cref="Graph{TKey,TValue}"/> class.
@@ -171,7 +171,10 @@ public class Graph<TKey, TValue> {
     /// the first is the source and the second the destination.</param>
     /// <returns>True if edge exists, false otherwise.</returns>
     /// <exception cref="ArgumentNullException"></exception>
-    public bool ContainsEdge([NotNull] KeyPair<TKey> pair) => 
+    public bool ContainsEdge([NotNull] (TKey, TKey) pair) => pair.Item1 != null && pair.Item2 != null 
+            ? _edges.ContainsKey(new KeyPair<TKey>(pair)) : throw new ArgumentNullException(nameof(pair));
+    
+    private bool ContainsEdge([NotNull] KeyPair<TKey> pair) => 
         pair != null ? _edges.ContainsKey(pair) : throw new ArgumentNullException(nameof(pair));
     
     private bool ContainsVertex(params TKey[] verts) => verts.All(v => _vertices.ContainsKey(v));
@@ -252,12 +255,12 @@ public class Graph<TKey, TValue> {
         if (!ContainsVertex(vert)) return false;
 
         _vertices.Remove(vert);
-        new List<TKey>(_adjacency[vert]).ForEach(adj => RemoveEdge(new KeyPair<TKey>(vert, adj)));
+        new List<TKey>(_adjacency[vert]).ForEach(adj => RemoveEdge((vert, adj)));
         _adjacency.Remove(vert);
 
         if (!IsDirected) return true;
         
-        new List<TKey>(_transpose[vert]).ForEach(adj => RemoveEdge(new KeyPair<TKey>(adj, vert)));
+        new List<TKey>(_transpose[vert]).ForEach(adj => RemoveEdge((adj, vert)));
         _transpose.Remove(vert);
         
         return true;
@@ -269,14 +272,14 @@ public class Graph<TKey, TValue> {
     /// <param name="pair">Pair of key that defines the edge, for a directed graph
     /// the first is the source and the second the destination.</param>
     /// <returns>True if the edge was successfully removed, false otherwise</returns>
-    public bool RemoveEdge([NotNull] KeyPair<TKey> pair) {
+    public bool RemoveEdge([NotNull] (TKey, TKey) pair) {
         if(!ContainsEdge(pair)) return false;
 
         var (from, to) = pair;
         _adjacency[from].Remove(to);
         if (!IsDirected) _adjacency[to].Remove(from);
 
-        _edges.Remove(pair);
+        _edges.Remove(new KeyPair<TKey>(pair));
         
         return true;
     }
@@ -288,6 +291,7 @@ public class Graph<TKey, TValue> {
     private enum SearchColor {
         White, Gray, Black
     }
+
     /// <summary>
     /// Performs an breadth-first search in the graph.
     /// </summary>
@@ -295,7 +299,7 @@ public class Graph<TKey, TValue> {
     /// <param name="transpose">Decides whether the edges of the bfs tree will point from parent to child (true)
     /// or child to parent (false)</param>
     /// <returns>A Breadth-First Tree generated in the search populated with every vertex reachable by the seed
-    /// containing its distance from the seed</returns>
+    /// containing its shortest path distance from the seed</returns>
     public Graph<TKey, int> BreadthFirstSearch([NotNull] TKey seed,  bool transpose = true) => 
         BreadthFirstSearch<int>(seed, 0, (du, v) => du+1, transpose);
     /// <summary>
@@ -341,6 +345,52 @@ public class Graph<TKey, TValue> {
         return parentTree;
     }
 
+
+    public Graph<TKey, (int, int)> DepthFirstSearch(bool transpose = true) =>
+        DepthFirstSearch(( v, t) => t, (v,d, t) => t, transpose);
+    
+    /// <summary>
+    /// Performs an breadth-first search in the graph.
+    /// </summary>
+    /// <param name="discover">Function that will be used to calculate the data of every vertex when its
+    /// first discovered given its key and the current timestamp</param>
+    /// <param name="finish">Function that will be used to calculate the data of every vertex when its
+    /// finished given its key, the result of its discover function and the current timestamp</param>
+    /// <param name="transpose">Decides whether the edges of the bfs tree will point from parent to child (true)
+    /// or child to parent (false)</param>
+    /// <typeparam name="TOut1">Type of the data value that will be calculated in the discover function</typeparam>
+    /// <typeparam name="TOut2">Type of the data value that will be calculated in the finish function</typeparam>
+    /// <returns>A Graph object with all Depth-First Trees generated in the search with its vertices
+    /// containing the data calculated by the dataSelector function</returns>
+    public Graph<TKey, (TOut1, TOut2)> DepthFirstSearch<TOut1, TOut2>([NotNull] Func<TKey, int, TOut1> discover, 
+        [NotNull] Func<TKey, TOut1, int, TOut2> finish, bool transpose = true) {
+        
+        var colors = _vertices.ToDictionary(pair => pair.Key, pair => SearchColor.White);
+        var parentTree = new Graph<TKey, (TOut1, TOut2)>(DefaultWeight, true);
+        var time = 0;
+        
+        //TODO: Edge categorization
+        void Visit(TKey u) {
+            if (colors[u] != SearchColor.White) return;
+            parentTree[u] = default;
+            var d = discover(u, ++time);
+            colors[u] = SearchColor.Gray;
+            foreach (var v in _adjacency[u].Where(v => colors[v] == SearchColor.White)) {
+                parentTree[v] = default;
+                if (transpose) parentTree[v, u] = this[u, v];
+                else parentTree[u, v] = this[u, v];
+                Visit(v);
+            }
+
+            colors[u] = SearchColor.Black;
+            var f = finish(u, d, ++time);
+            parentTree[u] = (d, f);
+        }
+        
+        Vertices.ForEach(Visit);
+
+        return parentTree;
+    }
     #endregion
     
     #region Print
@@ -356,9 +406,7 @@ public class Graph<TKey, TValue> {
     private string PrintAdjacency () =>
         _vertices.Aggregate("", (str, pair) => str + "\t " + PrintEdges(pair.Key) + "\n");
     private string PrintEdges(TKey key) => GetAdjacency(key).Aggregate(key + " -> ",
-        (str, other) => str + " " + other + 
-                        (Mathf.Abs(this[key, other] - 1f) > Mathf.Epsilon ? 
-                            " [ " + this[key, other] + " ]" : ""));
+        (str, other) => str + " " + this[(key, other)]);
 
     #endregion
 }

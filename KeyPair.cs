@@ -4,9 +4,11 @@ using JetBrains.Annotations;
 
 namespace Utils.ProcGenUtils.GraphModel {
 
-public class KeyPair<TKey> {
+internal class KeyPair<TKey> {
 	[NotNull] public readonly TKey Item1;
 	[NotNull] public readonly TKey Item2;
+	public (TKey, TKey) Tuple => (Item1, Item2);
+	public (TKey, TKey) TransposedTuple => (Item2, Item1);
 
 	public TKey this[int i] => i switch { 0 => Item1, 1 => Item2, _ => throw new IndexOutOfRangeException() };  
 	public KeyPair([NotNull] TKey item1, [NotNull] TKey item2) {
@@ -18,6 +20,7 @@ public class KeyPair<TKey> {
 		Item1 = pair[0] ?? throw new ArgumentNullException(nameof(Item1));
 		Item2 = pair[1] ?? throw new ArgumentNullException(nameof(Item2));
 	}
+	public KeyPair([NotNull] (TKey, TKey) pair) : this(pair.Item1, pair.Item2) { }
 	public TKey Other([NotNull] TKey key) {
 		if (key == null) throw new ArgumentNullException(nameof(key));
 		return key.Equals(Item1) ? Item2 : key.Equals(Item2) ? Item1 : throw new ArgumentException("Invalid key.");
