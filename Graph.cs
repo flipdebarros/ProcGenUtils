@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using JetBrains.Annotations;
-using Unity.VisualScripting;
 using UnityEngine;
 
 namespace Utils.ProcGenUtils.GraphModel {
@@ -13,10 +12,10 @@ namespace Utils.ProcGenUtils.GraphModel {
 /// <typeparam name="TKey">Type that will be used to index the vertices.</typeparam>
 /// <typeparam name="TValue">Type that vertices will hold as value</typeparam>
 public class Graph<TKey, TValue> {
-    private Dictionary<TKey, TValue> _vertices;
-    private Dictionary<TKey, List<TKey>> _adjacency;
-    private Dictionary<TKey, List<TKey>> _transpose;
-    private Dictionary<KeyPair<TKey>, Edge<TKey>>_edges;
+    private readonly Dictionary<TKey, TValue> _vertices;
+    private readonly Dictionary<TKey, List<TKey>> _adjacency;
+    private readonly Dictionary<TKey, List<TKey>> _transpose;
+    private readonly Dictionary<KeyPair<TKey>, Edge<TKey>>_edges;
 
     #region Public Properties
 
@@ -66,7 +65,6 @@ public class Graph<TKey, TValue> {
             else AddVertex(key, value);
         }
     }
-
     /// <summary>
     /// Retrieves a copy of an edge form the edge list or null if not found.
     /// </summary>
@@ -84,14 +82,16 @@ public class Graph<TKey, TValue> {
     /// <param name="b">Key of second vertex, the destination in directed graphs</param>
     /// <exception cref="ArgumentNullException"></exception>
     public float this[[NotNull] TKey a, [NotNull] TKey b] {
-        get{
-            var pair = new KeyPair<TKey>(a, b);
-            return ContainsEdge(pair) ? _edges[pair].Weight : AddEdge(pair).Weight;
-        }
+        get => ContainsEdge(a, b) ? _edges[new KeyPair<TKey>(a, b)].Weight : AddEdge((a, b)).Weight;
+        set { if(ContainsEdge(a, b)) _edges[new KeyPair<TKey>(a, b)].Weight = value;
+            else AddEdge((a, b)).Weight = value; }
+    }
+    internal float this[[NotNull] TKey a, [NotNull] TKey b, EdgeType type] {
         set{
-            var pair = new KeyPair<TKey>(a, b);
-            if (ContainsEdge(pair)) _edges[pair].Weight = value;
-            else AddEdge(pair).Weight = value;
+            if (ContainsEdge(a, b)) throw new ArgumentException("An existing edge should not be changed.");
+            var edge = AddEdge((a,b));
+            edge.Weight = value;
+            edge.Type = type;
         }
     }
 
@@ -127,9 +127,10 @@ public class Graph<TKey, TValue> {
     private Graph([NotNull] Graph<TKey, TValue> other, bool transpose) : 
         this(other.DefaultWeight, other.IsDirected) {
         if (other == null) throw new ArgumentNullException(nameof(other));
-        other.Vertices.ForEach(key => this[key] = other[key]);
-        if(transpose) other.Edges.ForEach(pair => this[pair.Item1, pair.Item2] = other[pair].Weight);
-        else other.Edges.ForEach(pair => this[pair.Item2, pair.Item1] = other[pair].Weight);
+        other.Vertices.ForEach(key => AddVertex(key, other[key]));
+        if (!transpose) other.Edges.ForEach(pair => AddEdge(other[pair]));
+        else other.Edges.ForEach(pair =>
+                AddEdge(other[pair].TransposedTuple, other[pair].Weight, other[pair].Type));
     }
     /// <summary>
     /// Initializes a new instance of the <see cref="Graph{TKey,TValue}"/> class.
@@ -220,9 +221,12 @@ public class Graph<TKey, TValue> {
         if(IsDirected) _transpose.Add(vertKey, new List<TKey>());
         return true;
     }
-    private Edge<TKey> AddEdge ([NotNull] KeyPair<TKey> pair) {
-        var (from, to) = (pair[0], pair[1]);
-        
+
+    private Edge<TKey> AddEdge([NotNull] Edge<TKey> edge) => AddEdge(edge.Tuple, edge.Weight, edge.Type);
+    private Edge<TKey> AddEdge([NotNull] (TKey, TKey) pair) => AddEdge(pair, DefaultWeight);
+    private Edge<TKey> AddEdge ([NotNull] (TKey, TKey) pair, float weight, EdgeType type = EdgeType.Null) {
+        var (from, to) = pair;
+
         //Avoid self loops on undirected graphs
         if (!IsDirected && from.Equals(to)) 
             throw new ArgumentException("Undirected graph cannot have self loops");
@@ -232,7 +236,7 @@ public class Graph<TKey, TValue> {
             throw new ArgumentException("Cannot create an edge with vertices not in the graph.");
 
         //Create the edge
-        var edge = new Edge<TKey>(from, to, DefaultWeight);
+        var edge = new Edge<TKey>(pair, weight, type);
         _adjacency[from].Add(to);
         if( !IsDirected ) _adjacency[to].Add(from);
         else _transpose[to].Add(from);
@@ -300,7 +304,7 @@ public class Graph<TKey, TValue> {
     /// or child to parent (false)</param>
     /// <returns>A Breadth-First Tree generated in the search populated with every vertex reachable by the seed
     /// containing its shortest path distance from the seed</returns>
-    public Graph<TKey, int> BreadthFirstSearch([NotNull] TKey seed,  bool transpose = true) => 
+    public Graph<TKey, int> BreadthFirstSearch([NotNull] TKey seed, bool transpose = false) => 
         BreadthFirstSearch<int>(seed, 0, (du, v) => du+1, transpose);
     /// <summary>
     /// Performs an breadth-first search in the graph.
@@ -315,7 +319,8 @@ public class Graph<TKey, TValue> {
     /// <returns>A Breadth-First Tree generated in the search populated with every vertex reachable by the seed
     /// and containing the data calculated by the dataSelector function</returns>
     /// <exception cref="ArgumentNullException"></exception>
-    public Graph<TKey, TOut> BreadthFirstSearch<TOut>([NotNull] TKey seed, [NotNull] TOut seedData, [NotNull] Func<TOut, TKey, TOut> dataSelector,  bool transpose = true) {
+    public Graph<TKey, TOut> BreadthFirstSearch<TOut>([NotNull] TKey seed, [NotNull] TOut seedData, 
+        [NotNull] Func<TOut, TKey, TOut> dataSelector, bool transpose = false) {
         if (seedData == null) throw new ArgumentNullException(nameof(seedData));
         if (dataSelector == null) throw new ArgumentNullException(nameof(dataSelector));
         if (!ContainsVertex(seed)) return null;
@@ -330,13 +335,15 @@ public class Graph<TKey, TValue> {
         while (queue.Count > 0) {
             var u = queue.Dequeue();
             _adjacency[u].ForEach(v => {
-                if (colors[v] != SearchColor.White) return;
+                if (colors[v] != SearchColor.White) {
+                    if (!transpose) parentTree[u, v, EdgeType.Cross] = this[u, v];
+                    return;
+                }
                 colors[v] = SearchColor.Gray;
-
                 
                 parentTree[v] = dataSelector(parentTree[u], v);
-                if (transpose) parentTree[v, u] = this[u, v];
-                else parentTree[u, v] = this[u, v];
+                if(transpose) parentTree[v, u] = this[u, v];
+                else parentTree[u, v, EdgeType.Cross] = this[u, v];
                 queue.Enqueue(v);
             });
             colors[u] = SearchColor.Black;
@@ -346,7 +353,7 @@ public class Graph<TKey, TValue> {
     }
 
 
-    public Graph<TKey, (int, int)> DepthFirstSearch(bool transpose = true) =>
+    public Graph<TKey, (int, int)> DepthFirstSearch(bool transpose = false) =>
         DepthFirstSearch(( v, t) => t, (v,d, t) => t, transpose);
     
     /// <summary>
@@ -363,23 +370,38 @@ public class Graph<TKey, TValue> {
     /// <returns>A Graph object with all Depth-First Trees generated in the search with its vertices
     /// containing the data calculated by the dataSelector function</returns>
     public Graph<TKey, (TOut1, TOut2)> DepthFirstSearch<TOut1, TOut2>([NotNull] Func<TKey, int, TOut1> discover, 
-        [NotNull] Func<TKey, TOut1, int, TOut2> finish, bool transpose = true) {
+        [NotNull] Func<TKey, TOut1, int, TOut2> finish, bool transpose = false) {
         
         var colors = _vertices.ToDictionary(pair => pair.Key, pair => SearchColor.White);
         var parentTree = new Graph<TKey, (TOut1, TOut2)>(DefaultWeight, true);
         var time = 0;
-        
-        //TODO: Edge categorization
+        var discoverTime = _vertices.ToDictionary(pair => pair.Key, pair => -1);
+
         void Visit(TKey u) {
             if (colors[u] != SearchColor.White) return;
             parentTree[u] = default;
-            var d = discover(u, ++time);
+
+            discoverTime[u] = ++time;
+            var d = discover(u, time);
             colors[u] = SearchColor.Gray;
-            foreach (var v in _adjacency[u].Where(v => colors[v] == SearchColor.White)) {
-                parentTree[v] = default;
-                if (transpose) parentTree[v, u] = this[u, v];
-                else parentTree[u, v] = this[u, v];
-                Visit(v);
+            foreach (var v in _adjacency[u]) {
+                switch (colors[v]) {
+                    case SearchColor.White:
+                        parentTree[v] = default;
+                        if(transpose) parentTree[v, u] = this[u, v];
+                        else parentTree[u, v, EdgeType.Tree] = this[u, v];
+                        Visit(v);
+                        break;
+                    case SearchColor.Gray:
+                        if(!transpose) parentTree[u, v, EdgeType.Back] = this[u, v];
+                        break;
+                    case SearchColor.Black:
+                        if(!transpose) {
+                            if (discoverTime[u] < discoverTime[v]) parentTree[u, v, EdgeType.Forward] = this[u, v];
+                            else parentTree[u, v, EdgeType.Cross] = this[u, v];
+                        }
+                        break;
+                }
             }
 
             colors[u] = SearchColor.Black;
@@ -406,7 +428,7 @@ public class Graph<TKey, TValue> {
     private string PrintAdjacency () =>
         _vertices.Aggregate("", (str, pair) => str + "\t " + PrintEdges(pair.Key) + "\n");
     private string PrintEdges(TKey key) => GetAdjacency(key).Aggregate(key + " -> ",
-        (str, other) => str + " " + this[(key, other)]);
+        (str, other) => str + " /" + this[(key, other)] + "/");
 
     #endregion
 }
