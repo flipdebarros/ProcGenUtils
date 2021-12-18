@@ -86,7 +86,7 @@ public class Graph<TKey, TValue> {
         set { if(ContainsEdge(a, b)) _edges[new KeyPair<TKey>(a, b)].Weight = value;
             else AddEdge((a, b)).Weight = value; }
     }
-    internal float this[[NotNull] TKey a, [NotNull] TKey b, EdgeType type] {
+    private float this[[NotNull] TKey a, [NotNull] TKey b, EdgeType type] {
         set{
             if (ContainsEdge(a, b)) throw new ArgumentException("An existing edge should not be changed.");
             var edge = AddEdge((a,b));
@@ -123,7 +123,7 @@ public class Graph<TKey, TValue> {
     /// <summary>
     /// Initializes a new instance of the <see cref="Graph{TKey,TValue}"/> class.
     /// </summary>
-    public Graph() : this(Mathf.Infinity, false) { }
+    public Graph() : this(Mathf.Infinity) { }
     private Graph([NotNull] Graph<TKey, TValue> other, bool transpose) : 
         this(other.DefaultWeight, other.IsDirected) {
         if (other == null) throw new ArgumentNullException(nameof(other));
@@ -172,15 +172,10 @@ public class Graph<TKey, TValue> {
     /// the first is the source and the second the destination.</param>
     /// <returns>True if edge exists, false otherwise.</returns>
     /// <exception cref="ArgumentNullException"></exception>
-    public bool ContainsEdge([NotNull] (TKey, TKey) pair) => pair.Item1 != null && pair.Item2 != null 
+    public bool ContainsEdge((TKey, TKey) pair) => pair.Item1 != null && pair.Item2 != null 
             ? _edges.ContainsKey(new KeyPair<TKey>(pair)) : throw new ArgumentNullException(nameof(pair));
-    
-    private bool ContainsEdge([NotNull] KeyPair<TKey> pair) => 
-        pair != null ? _edges.ContainsKey(pair) : throw new ArgumentNullException(nameof(pair));
-    
+
     private bool ContainsVertex(params TKey[] verts) => verts.All(v => _vertices.ContainsKey(v));
-    private bool ContainsEdge(params KeyPair<TKey>[] pairs) => pairs.All(key => _edges.ContainsKey(key));
-    private bool ContainsEdge(params Edge<TKey>[] edges) => edges.All(edge => _edges.ContainsKey(edge.Vertices));  
 
     #endregion
 
@@ -213,18 +208,17 @@ public class Graph<TKey, TValue> {
     #endregion
     
     #region Add
-    private bool AddVertex ([NotNull] TKey vertKey, [NotNull] TValue vertValue) {
-        if (ContainsVertex(vertKey)) return false;
-        
+    private void AddVertex([NotNull] TKey vertKey, [NotNull] TValue vertValue) {
+        if (ContainsVertex(vertKey)) return;
+
         _vertices.Add(vertKey, vertValue);
         _adjacency.Add(vertKey, new List<TKey>());
         if(IsDirected) _transpose.Add(vertKey, new List<TKey>());
-        return true;
     }
 
-    private Edge<TKey> AddEdge([NotNull] Edge<TKey> edge) => AddEdge(edge.Tuple, edge.Weight, edge.Type);
-    private Edge<TKey> AddEdge([NotNull] (TKey, TKey) pair) => AddEdge(pair, DefaultWeight);
-    private Edge<TKey> AddEdge ([NotNull] (TKey, TKey) pair, float weight, EdgeType type = EdgeType.Null) {
+    private void AddEdge([NotNull] Edge<TKey> edge) => AddEdge(edge.Tuple, edge.Weight, edge.Type);
+    private Edge<TKey> AddEdge((TKey, TKey) pair) => AddEdge(pair, DefaultWeight);
+    private Edge<TKey> AddEdge ((TKey, TKey) pair, float weight, EdgeType type = EdgeType.Null) {
         var (from, to) = pair;
 
         //Avoid self loops on undirected graphs
@@ -276,7 +270,7 @@ public class Graph<TKey, TValue> {
     /// <param name="pair">Pair of key that defines the edge, for a directed graph
     /// the first is the source and the second the destination.</param>
     /// <returns>True if the edge was successfully removed, false otherwise</returns>
-    public bool RemoveEdge([NotNull] (TKey, TKey) pair) {
+    public bool RemoveEdge((TKey, TKey) pair) {
         if(!ContainsEdge(pair)) return false;
 
         var (from, to) = pair;
@@ -296,125 +290,325 @@ public class Graph<TKey, TValue> {
         White, Gray, Black
     }
 
+    #region Breadth-First
+
+    /// <summary>
+    /// Calculates the simple shortest path from the seed to every vertex reachable by it.
+    /// </summary>
+    /// <param name="seed">Seed vertex key</param>
+    /// <returns>A pair of dictionaries in which, the first contains the distance from v to the seed
+    /// and the second contains the vertex that its edge with v will lead v to s the fastest</returns>
+    public (Dictionary<TKey, int>, Dictionary<TKey, TKey>) BFSShortestPath([NotNull] TKey seed) {
+        var dist = new Dictionary<TKey, int>{{seed, 0}};
+        var pi = new Dictionary<TKey, TKey>();
+        
+        BreadthFirstSearch(seed, (u, v) => { dist.Add(v, dist[u]+1); pi.Add(v, u); });
+        return (dist, pi);
+    }
+
     /// <summary>
     /// Performs an breadth-first search in the graph.
     /// </summary>
     /// <param name="seed">Vertex which will be used to start the search</param>
-    /// <param name="transpose">Decides whether the edges of the bfs tree will point from parent to child (true)
-    /// or child to parent (false)</param>
-    /// <returns>A Breadth-First Tree generated in the search populated with every vertex reachable by the seed
-    /// containing its shortest path distance from the seed</returns>
-    public Graph<TKey, int> BreadthFirstSearch([NotNull] TKey seed, bool transpose = false) => 
-        BreadthFirstSearch<int>(seed, 0, (du, v) => du+1, transpose);
-    /// <summary>
-    /// Performs an breadth-first search in the graph.
-    /// </summary>
-    /// <param name="seed">Vertex which will be used to start the search</param>
-    /// <param name="seedData">The data that will be contained in the root of bfs tree returned</param>
-    /// <param name="dataSelector">Function that will be used to calculate the data of every vertex in
-    /// the bfs tree given the data of its parent vertex and its key</param>
-    /// <param name="transpose">Decides whether the edges of the bfs tree will point from parent to child (true)
-    /// or child to parent (false)</param>
-    /// <typeparam name="TOut">Type of the data value that will be stored in the bfs tree's vertices</typeparam>
-    /// <returns>A Breadth-First Tree generated in the search populated with every vertex reachable by the seed
-    /// and containing the data calculated by the dataSelector function</returns>
+    /// <param name="discover">Function that will be called when an edge finds a vertex that
+    /// hasn't already been discovered, it receives the current vertex and the one whose edge found it</param>
     /// <exception cref="ArgumentNullException"></exception>
-    public Graph<TKey, TOut> BreadthFirstSearch<TOut>([NotNull] TKey seed, [NotNull] TOut seedData, 
-        [NotNull] Func<TOut, TKey, TOut> dataSelector, bool transpose = false) {
-        if (seedData == null) throw new ArgumentNullException(nameof(seedData));
-        if (dataSelector == null) throw new ArgumentNullException(nameof(dataSelector));
-        if (!ContainsVertex(seed)) return null;
+    /// <exception cref="ArgumentException">Seed not in the graph.</exception>
+    public void BreadthFirstSearch([NotNull] TKey seed, [NotNull] Action<TKey, TKey> discover) =>
+        BreadthFirstSearch(seed, discover, (u, v) => { });
+
+    /// <summary>
+    /// Performs an breadth-first search in the graph.
+    /// </summary>
+    /// <param name="seed">Vertex which will be used to start the search</param>
+    /// <param name="discover">Function that will be called when an edge finds a vertex that
+    /// hasn't already been discovered, it receives the current vertex and the one whose edge found it</param>
+    /// <param name="revisit">Function that will be called when an edge finds a vertex that
+    /// has already been discovered, it receives the current vertex and the one whose edge found it</param>
+    /// <exception cref="ArgumentNullException"></exception>
+    /// <exception cref="ArgumentException">Seed not in the graph.</exception>
+    public void BreadthFirstSearch([NotNull] TKey seed, [NotNull] Action<TKey, TKey> discover,
+        [NotNull] Action<TKey, TKey> revisit) {
+        if (discover == null) throw new ArgumentNullException(nameof(discover));
+        if (revisit == null) throw new ArgumentNullException(nameof(revisit));
+        if (!ContainsVertex(seed)) throw new ArgumentException("Seed not in the graph.");
 
         var colors = _vertices.ToDictionary(pair => pair.Key, pair => SearchColor.White);
-        var parentTree = new Graph<TKey, TOut>(DefaultWeight, true);
-        
+
         colors[seed] = SearchColor.Gray;
-        parentTree[seed] = seedData;
 
         var queue = new Queue<TKey>(new []{seed});
         while (queue.Count > 0) {
             var u = queue.Dequeue();
             _adjacency[u].ForEach(v => {
                 if (colors[v] != SearchColor.White) {
-                    if (!transpose) parentTree[u, v, EdgeType.Cross] = this[u, v];
+                    revisit(u, v);
                     return;
                 }
-                colors[v] = SearchColor.Gray;
                 
-                parentTree[v] = dataSelector(parentTree[u], v);
-                if(transpose) parentTree[v, u] = this[u, v];
-                else parentTree[u, v, EdgeType.Cross] = this[u, v];
+                colors[v] = SearchColor.Gray;
+                discover(u, v);
                 queue.Enqueue(v);
             });
             colors[u] = SearchColor.Black;
         }
-
-        return parentTree;
     }
 
-
-    public Graph<TKey, (int, int)> DepthFirstSearch(bool transpose = false) =>
-        DepthFirstSearch(( v, t) => t, (v,d, t) => t, transpose);
-    
     /// <summary>
-    /// Performs an breadth-first search in the graph.
+    /// Runs a Breadth-first search in the graph to construct a breadth-first tree.
+    /// </summary>
+    /// <param name="seed">The seed vertex used to start the search</param>
+    /// <param name="seedData">The value that the seed vertex will hold</param>
+    /// <param name="dataSelector">Function that defines each vertex value,
+    /// given its parent value and the current vertex key</param>
+    /// <param name="addCrossEdges">Decides whether or not to add the remaining edges of the
+    /// source graph that don't make up the tree, marked with the type "Cross"</param>
+    /// <typeparam name="TOut">Type of the value that the vertices will hold</typeparam>
+    /// <returns>A graph object containing the bfs tree resulting from the search</returns>
+    /// <exception cref="ArgumentNullException"></exception>
+    /// <exception cref="ArgumentException">Seed not in the graph.</exception>
+    public Graph<TKey, TOut> BreadthFirstTree<TOut>([NotNull] TKey seed, [NotNull] TOut seedData,
+        [NotNull] Func<TOut, TKey, TOut> dataSelector, bool addCrossEdges = false) {
+        
+        var tree = new Graph<TKey, TOut>(DefaultWeight, true) { [seed] = seedData };
+        
+        void Discover(TKey u, TKey v) {
+            tree[v] = dataSelector(tree[u], v);
+            tree[u, v, EdgeType.Tree] = this[u, v];
+        }
+
+        void Revisit(TKey u, TKey v) {
+            if (!IsDirected && tree.ContainsEdge(v, u)) return;
+            tree[u, v, EdgeType.Cross] = this[u, v];
+        }
+
+        if(addCrossEdges) BreadthFirstSearch(seed, Discover, Revisit);
+        else BreadthFirstSearch(seed, Discover);
+
+        return tree;
+    }
+
+    #endregion
+
+    #region Depth-First
+
+    /// <summary>
+    /// Performs an depth-first search in the graph.
     /// </summary>
     /// <param name="discover">Function that will be used to calculate the data of every vertex when its
     /// first discovered given its key and the current timestamp</param>
     /// <param name="finish">Function that will be used to calculate the data of every vertex when its
-    /// finished given its key, the result of its discover function and the current timestamp</param>
-    /// <param name="transpose">Decides whether the edges of the bfs tree will point from parent to child (true)
-    /// or child to parent (false)</param>
-    /// <typeparam name="TOut1">Type of the data value that will be calculated in the discover function</typeparam>
-    /// <typeparam name="TOut2">Type of the data value that will be calculated in the finish function</typeparam>
-    /// <returns>A Graph object with all Depth-First Trees generated in the search with its vertices
-    /// containing the data calculated by the dataSelector function</returns>
-    public Graph<TKey, (TOut1, TOut2)> DepthFirstSearch<TOut1, TOut2>([NotNull] Func<TKey, int, TOut1> discover, 
-        [NotNull] Func<TKey, TOut1, int, TOut2> finish, bool transpose = false) {
-        
+    /// finished given its key and the current timestamp</param>
+    /// <exception cref="ArgumentNullException"></exception>
+    public void DepthFirstSearch([NotNull] Action<TKey> discover, [NotNull] Action<TKey> finish) =>
+        DepthFirstSearch(Vertices, discover, finish);
+    
+    /// <summary>
+    /// Performs an depth-first search in the graph.
+    /// </summary>
+    /// <param name="vertices">List of vertices that will be iterated over to perform the search</param>
+    /// <param name="discover">Function that will be used to calculate the data of every vertex when its
+    /// first discovered given its key and the current timestamp</param>
+    /// <param name="finish">Function that will be used to calculate the data of every vertex when its
+    /// finished given its key and the current timestamp</param>
+    /// <exception cref="ArgumentNullException"></exception>
+    public void DepthFirstSearch([NotNull] List<TKey> vertices, [NotNull] Action<TKey> discover, [NotNull] Action<TKey> finish) => 
+        DepthFirstSearch(vertices, discover, (u, v) => {}, 
+        (u, v) => {}, (u, v) => {}, finish);
+
+    /// <summary>
+    /// Performs an depth-first search in the graph.
+    /// </summary>
+    /// <param name="vertices">List of vertices that will be iterated over to perform the search</param>
+    /// <param name="discover">Function that will be called when a vertex is first discovered by the algorithm</param>
+    /// <param name="explore">Function that will be called when a vertex is first explored by the algorithm,
+    /// before its discovered</param>
+    /// <param name="finish">Function that will be called when a vertex is marked as finished by the algorithm</param>
+    /// <exception cref="ArgumentNullException"></exception>
+    public void DepthFirstSearch([NotNull] List<TKey> vertices, [NotNull] Action<TKey> discover,
+        [NotNull] Action<TKey, TKey> explore, [NotNull] Action<TKey> finish) =>
+        DepthFirstSearch(vertices, discover, explore, (u, v) => { }, (u, v) => { }, finish);
+    
+    /// <summary>
+    /// Performs an depth-first search in the graph.
+    /// </summary>
+    /// <param name="vertices">List of vertices that will be iterated over to perform the search</param>
+    /// <param name="discover">Function that will be called when a vertex is first discovered by the algorithm</param>
+    /// <param name="explore">Function that will be called when a vertex is first explored by the algorithm,
+    /// before its discovered</param>
+    /// <param name="visit">Function that will be called when a vertex is visited by the algorithm,
+    /// after it was discovered but before its finished</param>
+    /// <param name="revisit">Function that will be called when a vertex is visited by the algorithm,
+    /// after its finished</param>
+    /// <param name="finish">Function that will be called when a vertex is marked as finished by the algorithm</param>
+    /// <exception cref="ArgumentNullException"></exception>
+    public void DepthFirstSearch([NotNull] List<TKey> vertices, [NotNull] Action<TKey> discover, 
+        [NotNull] Action<TKey, TKey> explore, [NotNull] Action<TKey, TKey> visit, 
+        [NotNull] Action<TKey, TKey> revisit, [NotNull] Action<TKey> finish){
+        if (vertices == null) throw new ArgumentNullException(nameof(vertices));
+        if (discover == null) throw new ArgumentNullException(nameof(discover));
+        if (explore == null) throw new ArgumentNullException(nameof(explore));
+        if (visit == null) throw new ArgumentNullException(nameof(visit));
+        if (revisit == null) throw new ArgumentNullException(nameof(revisit));
+        if (finish == null) throw new ArgumentNullException(nameof(finish));
+
         var colors = _vertices.ToDictionary(pair => pair.Key, pair => SearchColor.White);
-        var parentTree = new Graph<TKey, (TOut1, TOut2)>(DefaultWeight, true);
-        var time = 0;
-        var discoverTime = _vertices.ToDictionary(pair => pair.Key, pair => -1);
 
         void Visit(TKey u) {
             if (colors[u] != SearchColor.White) return;
-            parentTree[u] = default;
 
-            discoverTime[u] = ++time;
-            var d = discover(u, time);
+            discover(u);
             colors[u] = SearchColor.Gray;
             foreach (var v in _adjacency[u]) {
+                if (!vertices.Contains(v)) continue;
                 switch (colors[v]) {
                     case SearchColor.White:
-                        parentTree[v] = default;
-                        if(transpose) parentTree[v, u] = this[u, v];
-                        else parentTree[u, v, EdgeType.Tree] = this[u, v];
+                        explore(u, v);
                         Visit(v);
                         break;
                     case SearchColor.Gray:
-                        if(!transpose) parentTree[u, v, EdgeType.Back] = this[u, v];
+                        visit(u, v);
                         break;
                     case SearchColor.Black:
-                        if(!transpose) {
-                            if (discoverTime[u] < discoverTime[v]) parentTree[u, v, EdgeType.Forward] = this[u, v];
-                            else parentTree[u, v, EdgeType.Cross] = this[u, v];
-                        }
+                        revisit(u, v);
                         break;
                 }
             }
 
             colors[u] = SearchColor.Black;
-            var f = finish(u, d, ++time);
-            parentTree[u] = (d, f);
+            finish(u);
         }
         
-        Vertices.ForEach(Visit);
-
-        return parentTree;
+        vertices.ForEach(Visit);
     }
-    #endregion
+
+    /// <summary>
+    /// Runs a Depth-first search in the graph to construct a breadth-first tree.
+    /// </summary>
+    /// <param name="allEdges">Decides whether or not to add the remaining edges of the
+    /// source graph that don't make up the tree, marked with the types "Cross", "Forward" or "Back"</param>
+    /// <returns>A graph object containing the dfs tree resulting from the search</returns>
+    /// <exception cref="ArgumentNullException"></exception>
+    public Graph<TKey, (int, int)> DepthFirstTree(bool allEdges = false) =>
+        DepthFirstTree((v, t) => t, (v, d, t) => (d, t), allEdges);
     
+    /// <summary>
+    /// Runs a Depth-first search in the graph to construct a breadth-first tree.
+    /// </summary>
+    /// <param name="discover">Function that will be called when a new vertex is discovered by the search,
+    /// it calculates a value that will be passed to the finish function given the current vertex key and timestamp</param>
+    /// <param name="finish">Function that will be called when a vertex is marked as finished by the search,
+    /// it calculates a value that will be stored in the vertex given the current vertex key, the result of
+    /// the discover function and the current timestamp</param>
+    /// <param name="allEdges">Decides whether or not to add the remaining edges of the
+    /// source graph that don't make up the tree, marked with the types "Cross", "Forward" or "Back"</param>
+    /// <typeparam name="TDisc">Type of return value from discover function</typeparam>
+    /// <typeparam name="TOut">Type of the value that the vertices will hold</typeparam>
+    /// <returns>A graph object containing the dfs tree resulting from the search</returns>
+    /// <exception cref="ArgumentNullException"></exception>
+    public Graph<TKey, TOut> DepthFirstTree<TDisc, TOut> (
+        [NotNull] Func<TKey, int, TDisc> discover, 
+        [NotNull] Func<TKey, TDisc, int, TOut> finish, bool allEdges = false) {
+        
+        var tree = new Graph<TKey, TOut>(DefaultWeight, true);
+        Vertices.ForEach(v => tree[v] = default);
+        var discoverTime = _vertices.ToDictionary(pair => pair.Key, pair => -1);
+        var time = 0;
+
+        void Discover(TKey u) {
+            discoverTime[u] = ++time;
+        }
+
+        void Explore(TKey u, TKey v) {
+            tree[u, v, EdgeType.Tree] = this[u, v];
+        }
+
+        void Visit(TKey u, TKey v) {
+            if (!IsDirected && tree.ContainsEdge(v, u)) return;
+            tree[u, v, EdgeType.Back] = this[u, v];
+        }
+
+        void Revisit(TKey u, TKey v) {
+            if (!IsDirected && tree.ContainsEdge(v, u)) return;
+            if (discoverTime[u] < discoverTime[v]) tree[u, v, EdgeType.Forward] = this[u, v];
+            else tree[u, v, EdgeType.Cross] = this[u, v];
+        }
+
+        void Finish(TKey u) {
+            tree[u] = finish(u, discover(u, discoverTime[u]), ++time);
+        }
+        
+        if(allEdges) DepthFirstSearch(Vertices, Discover, Explore, Visit, Revisit, Finish);
+        else DepthFirstSearch(Vertices, Discover, Explore, (u, v) => { }, (u, v) => { } , Finish);
+        
+        return tree;
+    }
+
+    #endregion
+
+    /// <summary>
+    /// Finds a topological order for a directed acyclic graph.
+    /// </summary>
+    /// <returns>List of vertices keys in the topological order.</returns>
+    /// <exception cref="InvalidOperationException">Graph cannot be undirected, topological sort only works for directed acyclic graphs.</exception>
+    /// <exception cref="InvalidOperationException">"Back edge found. Graph cannot be cyclical, topological sort only works for directed acyclic graphs"</exception>
+    public List<TKey> TopologicalSort () {
+        if (!IsDirected)
+            throw new InvalidOperationException("Graph cannot be undirected, topological sort only works for directed acyclic graphs.");
+        var res = new LinkedList<TKey>();
+        
+        DepthFirstSearch(Vertices, u => {}, (u, v) => {}, 
+            (u, v) => throw new InvalidOperationException("Back edge found: " + (u, v) +". Graph cannot be cyclical, topological sort only works for directed acyclic graphs"),
+            (u, v) => {}, u => res.AddFirst(u));
+        
+        return res.ToList();
+    }
+
+    /// <summary>
+    /// Finds all the strongly connected components of a directed graph.
+    /// </summary>
+    /// <returns>A list of all strongly connected components</returns>
+    /// <exception cref="InvalidOperationException"></exception>
+    public List<List<TKey>> StronglyConnectedComponents() {
+        if (!IsDirected)
+            throw new InvalidOperationException("Graph cannot be undirected.");
+
+        var time = 0;
+        var finishTime = Vertices.ToDictionary(v => v, v => -1); 
+        
+        //Calculate Finish Times
+        DepthFirstSearch(u => time++, u => finishTime[u] = ++time);
+
+        var vertices = Vertices;
+        vertices.Sort((u, v) => finishTime[v] - finishTime[u]);
+
+        var explored = vertices.ToDictionary(v => v, v => false);
+        var scc = new List<List<TKey>>();
+        var component = new List<TKey>();
+
+        void Discover(TKey u) {
+            component.Add(u);
+        }
+
+        void Finish(TKey u) {
+            if (explored[u]) return; 
+            
+            /* if u was not explored, then its the root of a strongly connected component
+            and that means every vertex of this component has been added, so add the component
+            to the list of components and start a new one. */
+            scc.Add(component);
+            component = new List<TKey>();
+        }
+        
+        Transpose.DepthFirstSearch(vertices, Discover, (u, v) => explored[v] = true, Finish);
+        
+        return scc;
+    }
+    
+    
+
+    #endregion
+
     #region Print
 
     public override string ToString () => "Directed Graph: " + IsDirected + 
