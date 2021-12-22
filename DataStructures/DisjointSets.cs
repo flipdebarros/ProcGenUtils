@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using JetBrains.Annotations;
 
-namespace Utils.ProcGenUtils.GraphModel {
+namespace Utils.ProcGenUtils.DataStructures {
 
 /// <summary>
 /// Implements the disjoint sets data structure.
