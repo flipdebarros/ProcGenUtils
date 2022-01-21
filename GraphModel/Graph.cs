@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using JetBrains.Annotations;
-using UnityEngine;
 
 namespace Utils.ProcGenUtils.GraphModel {
 /// <summary>
@@ -17,12 +16,15 @@ public class Graph<TKey, TValue> {
     private readonly Dictionary<TKey, List<TKey>> _transpose;
     private readonly Dictionary<KeyPair<TKey>, Edge<TKey>>_edges;
 
+    private int _nNegativeEdges = 0;
+
     #region Public Properties
 
     /// <summary>
     /// Returns o list of all pairs of keys that define an edge in the graph.
     /// </summary>
     public List<(TKey, TKey)> Edges => _edges.Select(pair => pair.Key.Tuple).ToList();
+    public int EdgeCount => _edges.Count;
     /// <summary>
     /// Returns o list of all pairs of keys that its transpose define an edge in the directed graph.
     /// </summary>
@@ -34,7 +36,9 @@ public class Graph<TKey, TValue> {
     /// Returns a list of all vertex keys in the graph.
     /// </summary>
     public List<TKey> Vertices => _vertices.Select(pair => pair.Key).ToList();
+    public int VertexCount => _vertices.Count;
     public readonly bool IsDirected;
+    public bool HasNegativeWeights => _nNegativeEdges > 0;
     public readonly float DefaultWeight;
 
     /// <summary>
@@ -83,7 +87,13 @@ public class Graph<TKey, TValue> {
     /// <exception cref="ArgumentNullException"></exception>
     public float this[[NotNull] TKey a, [NotNull] TKey b] {
         get => ContainsEdge(a, b) ? _edges[new KeyPair<TKey>(a, b)].Weight : AddEdge((a, b)).Weight;
-        set { if(ContainsEdge(a, b)) _edges[new KeyPair<TKey>(a, b)].Weight = value;
+        set {
+            if (ContainsEdge(a, b)) {
+                var edge = _edges[new KeyPair<TKey>(a, b)];
+                if (value < 0f && edge.Weight > 0f) _nNegativeEdges++;
+                else if (value > 0f && edge.Weight < 0f) _nNegativeEdges--;
+                edge.Weight = value;
+            }
             else AddEdge((a, b)).Weight = value; }
     }
     internal float this[[NotNull] TKey a, [NotNull] TKey b, EdgeType type] {
@@ -98,7 +108,7 @@ public class Graph<TKey, TValue> {
     #endregion
 
     #region Constructors
-    
+
     /// <summary>
     /// Initializes a new instance of the <see cref="Graph{TKey,TValue}"/> class.
     /// </summary>
@@ -119,11 +129,11 @@ public class Graph<TKey, TValue> {
     /// Initializes a new instance of the <see cref="Graph{TKey,TValue}"/> class.
     /// </summary>
     /// <param name="isDirected">If true, every edge added will be treated as directed.</param>
-    public Graph(bool isDirected) : this(Mathf.Infinity, isDirected) { }
+    public Graph(bool isDirected) : this(float.PositiveInfinity, isDirected) { }
     /// <summary>
     /// Initializes a new instance of the <see cref="Graph{TKey,TValue}"/> class.
     /// </summary>
-    public Graph() : this(Mathf.Infinity) { }
+    public Graph() : this(float.PositiveInfinity) { }
     private Graph([NotNull] Graph<TKey, TValue> other, bool transpose) : 
         this(other.DefaultWeight, other.IsDirected) {
         if (other == null) throw new ArgumentNullException(nameof(other));
@@ -228,6 +238,8 @@ public class Graph<TKey, TValue> {
         //Check if the vertices really exist in the graph
         if (!ContainsVertex(from, to))
             throw new ArgumentException("Cannot create an edge with vertices not in the graph.");
+
+        if (weight < 0f) _nNegativeEdges++;
 
         //Create the edge
         var edge = new Edge<TKey>(pair, weight, type);
@@ -547,9 +559,10 @@ public class Graph<TKey, TValue> {
     #region Print
 
     public override string ToString () => "Directed Graph: " + IsDirected + 
-                                          "\nDefault Weight Value: " + DefaultWeight + 
+                                          "\nDefault Weight Value: " + DefaultWeight +
+                                          (VertexCount == 0 ? "\nEmpty Graph" :
                                           "\nEdges:\n" + PrintAdjacency() +
-                                          "\nVertices:\n" + PrintVertices();
+                                          "\nVertices:\n" + PrintVertices());
     private string PrintVertex(TKey key) => key + ": " + this[key];
     
     private string PrintVertices () =>

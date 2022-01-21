@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using JetBrains.Annotations;
-using UnityEngine;
 
 namespace Utils.ProcGenUtils.DataStructures {
 
@@ -51,6 +50,7 @@ public class FibonacciHeap<TObj, TKey> where TKey : IComparable  {
 	private readonly HeapNode _root;
 	private LinkedList<HeapNode> RootList => _root.Children;
 	private HeapNode _minNode;
+
 	private readonly Dictionary<TObj, HeapNode> _nodes;
 	public int Count => _nodes.Count;
 	public TObj Min => _minNode != null ? _minNode.NodeObject : default;
@@ -82,10 +82,12 @@ public class FibonacciHeap<TObj, TKey> where TKey : IComparable  {
 	/// </summary>
 	/// <param name="obj">Object to be inserted or have its key decreased in the heap</param>
 	/// <exception cref="ArgumentNullException"></exception>
+	/// <exception cref="ArgumentException">Object not present in the heap.</exception>
 	/// <exception cref="InvalidOperationException">New key is greater than previous key.</exception>
 	[NotNull]
 	public TKey this[[NotNull] TObj obj] {
-		set{
+		get => !Contains(obj) ? throw new ArgumentException("Object not present in the heap.") : _nodes[obj].Key;
+		set {
 			if (value == null) throw new ArgumentNullException(nameof(value));
 			if (!Contains(obj)) Insert(obj, value);
 			else {
@@ -106,9 +108,6 @@ public class FibonacciHeap<TObj, TKey> where TKey : IComparable  {
 
 	private void DecreaseKey(TObj obj, TKey key) {
 		var x = _nodes[obj];
-		
-		if (key.CompareTo(x.Key) > 0)
-			throw new InvalidOperationException("New key is greater than previous key.");
 
 		x.Key = key;
 		var y = x.Parent;
@@ -174,7 +173,7 @@ public class FibonacciHeap<TObj, TKey> where TKey : IComparable  {
 		          throw new InvalidOperationException("Cannot extract minimum element from an empty heap.");
 		foreach (var child in min.Children) 
 			AddToRootList(child);
-
+		
 		var right = min.Right;
 		RemoveFromRootList(min);
 
@@ -188,7 +187,7 @@ public class FibonacciHeap<TObj, TKey> where TKey : IComparable  {
 		return min.NodeObject;
 	}
 	private void ConsolidateHeap () {
-		var upperBound = Mathf.FloorToInt(Mathf.Log(Count, 2)) + 1;
+		var upperBound = (int) Math.Floor(Math.Log(Count, 2f)) * 2 + 1;
 		var degrees = new HeapNode[upperBound];
 
 		var node = _minNode;
@@ -199,7 +198,7 @@ public class FibonacciHeap<TObj, TKey> where TKey : IComparable  {
 			var d = x.Degree;
 			while (degrees[d] != null) {
 				var y = degrees[d];
-				if (x.Key.CompareTo(y.Key) > 0) (x, y) = (y, x);
+				if (x.Key.CompareTo(y.Key) >= 0) (x, y) = (y, x);
 				HeapLink(x, y);
 				degrees[d] = null;
 				d++;
@@ -212,6 +211,7 @@ public class FibonacciHeap<TObj, TKey> where TKey : IComparable  {
 
 		}
 
+		_minNode = RootList.First.Value;
 		foreach (var elem in RootList) 
 			_minNode = elem.Key.CompareTo(_minNode.Key) < 0 ? elem : _minNode;
 	}

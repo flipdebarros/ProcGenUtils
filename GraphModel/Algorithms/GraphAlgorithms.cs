@@ -1,9 +1,9 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using Utils.ProcGenUtils.DataStructures;
+using Utils.ProcGenUtils.GraphModel.SpanningTrees;
 
-namespace Utils.ProcGenUtils.GraphModel {
+namespace Utils.ProcGenUtils.GraphModel.Algorithms {
 
 public static class GraphAlgorithms {
     
@@ -72,46 +72,25 @@ public static class GraphAlgorithms {
         return scc;
     }
 
-    private static Graph<TKey, TValue> Kruskal<TKey, TValue> (Graph<TKey, TValue> graph, Comparison<(TKey, TKey)> comparison) {
-        if (graph.IsDirected)
-            throw new InvalidOperationException("Graph cannot be directed.");
-
-        var tree = new Graph<TKey, TValue>(graph.DefaultWeight);
-        graph.Vertices.ForEach(v => tree[v] = graph[v]);
-
-        var set = new DisjointSets<TKey>(graph.Vertices);
-        var edges = graph.Edges;
-        edges.Sort(comparison);
-        edges.ForEach(tuple => {
-            var (u, v) = tuple;
-            if (set[u].Equals(set[v])) return;
-            tree[u, v, EdgeType.Tree] = graph[u, v];
-            set[u] = v;
-        });
-        return tree;
-    }
-
     /// <summary>
-    /// Finds the minimal spanning tree of a weighted undirected graph using the Kruskal algorithm. 
+    /// Finds the minimal spanning tree of a weighted undirected graph. 
     /// </summary>
     /// <param name="graph">Graph object</param>
     /// <typeparam name="TKey">Type that will be used to index the vertices.</typeparam>
-    /// <typeparam name="TValue">Type that vertices will hold as value</typeparam>
-    /// <returns>A graph object containing a minimal spanning tree of the graph</returns>
-    /// <exception cref="InvalidOperationException">Graph cannot be directed</exception>
-    public static Graph<TKey, TValue> MinSpanningTreeKruskal<TKey, TValue> (this Graph<TKey, TValue> graph) => 
-        Kruskal(graph, (e1, e2) => Math.Sign(graph[e1].Weight - graph[e2].Weight));
-    
-    /// <summary>
-    /// Finds the maximal spanning tree of a weighted undirected graph using the Kruskal algorithm. 
-    /// </summary>
-    /// <param name="graph">Graph object</param>
-    /// <typeparam name="TKey">Type that will be used to index the vertices.</typeparam>
-    /// <typeparam name="TValue">Type that vertices will hold as value</typeparam>
+    /// <typeparam name="TValue">Type that vertices hold as value</typeparam>
     /// <returns>A graph object containing a maximal spanning tree of the graph</returns>
     /// <exception cref="InvalidOperationException">Graph cannot be directed</exception>
-    public static Graph<TKey, TValue> MaxSpanningTreeKruskal<TKey, TValue> (this Graph<TKey, TValue> graph) => 
-        Kruskal(graph, (e1, e2) => Math.Sign(graph[e2].Weight - graph[e1].Weight));
+    public static Graph<TKey, TValue> MinSpanningTree<TKey, TValue>(this Graph<TKey, TValue> graph) => graph.Prim();
+    
+    /// <summary>
+    /// Finds the maximal spanning tree of a weighted undirected graph. 
+    /// </summary>
+    /// <param name="graph">Graph object</param>
+    /// <typeparam name="TKey">Type that will be used to index the vertices.</typeparam>
+    /// <typeparam name="TValue">Type that vertices hold as value</typeparam>
+    /// <returns>A graph object containing a maximal spanning tree of the graph</returns>
+    /// <exception cref="InvalidOperationException">Graph cannot be directed</exception>
+    public static Graph<TKey, TValue> MaxSpanningTree<TKey, TValue>(this Graph<TKey, TValue> graph) => graph.PrimMaxTree();
 }
 
 }

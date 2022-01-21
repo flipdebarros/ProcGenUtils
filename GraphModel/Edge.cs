@@ -1,6 +1,5 @@
 ﻿using System;
 using JetBrains.Annotations;
-using UnityEngine;
 
 namespace Utils.ProcGenUtils.GraphModel {
 
@@ -26,7 +25,7 @@ public class Edge<TKey> {
 	}
 	public TKey Other([NotNull] TKey key) => Vertices.Other(key);
 
-	public override string ToString () => Tuple + ( Mathf.Abs(Weight - 1f) < Mathf.Epsilon ? "" : " [ " + Weight + " ]") +
+	public override string ToString () => Tuple + ( Math.Abs(Weight - 1f) < float.Epsilon ? "" : " [ " + Weight + " ]") +
 	                                      (Type != EdgeType.Null ? ": " + Type : "");
 }
 }

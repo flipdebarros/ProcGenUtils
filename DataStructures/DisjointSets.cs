@@ -65,7 +65,7 @@ public class DisjointSets<T> {
 		if (y == null) throw new ArgumentNullException(nameof(y));
 		if (!_nodes.ContainsKey(x) || !_nodes.ContainsKey(y)) 
 			throw new ArgumentException("Object is not a set.");
-		Link(this[x], this[y]);
+		Link(FindSet(x), FindSet(y));
 	}
 
 	private void Link(T x, T y) {
@@ -88,11 +88,11 @@ public class DisjointSets<T> {
 	public T FindSet([NotNull] T x) {
 		if (x == null) throw new ArgumentNullException(nameof(x));
 		if (!_nodes.ContainsKey(x)) throw new ArgumentException("Object is not a set.");
-		
-		var parent = _nodes[x].Parent;
-		if (!x.Equals(parent)) 
-			_nodes[x].Parent = FindSet(parent);
-		return parent;
+
+		var node = _nodes[x];
+		if (!x.Equals(node.Parent)) 
+			node.Parent = FindSet(node.Parent);
+		return node.Parent;
 	}
 
 }
